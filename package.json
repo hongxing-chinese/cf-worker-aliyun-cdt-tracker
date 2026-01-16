@@ -1,0 +1,24 @@
+{
+  "name": "cf-worker-aliyun-cdt-tracker",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/afoim/cf-worker-aliyun-cdt-tracker.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/afoim/cf-worker-aliyun-cdt-tracker/issues"
+  },
+  "homepage": "https://github.com/afoim/cf-worker-aliyun-cdt-tracker#readme",
+  "devDependencies": {
+    "wrangler": "^4.59.2"
+  }
+}
