@@ -1,4 +1,4 @@
-name = "aliyun-cdt-tracker"
+name = "cf-worker-aliyun-cdt-tracker"
 main = "src/index.js"
 compatibility_date = "2024-04-05"
 
