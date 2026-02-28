@@ -6,8 +6,7 @@ compatibility_date = "2024-04-05"
 # 请在 Cloudflare Dashboard 中设置这些变量，不要直接写在这里，以防泄露
 # ACCESS_KEY_ID
 # ACCESS_KEY_SECRET
-# REGION_ID
-# ECS_INSTANCE_ID
+# ECS_INSTANCES_JSON  (JSON array: [{"region": "cn-hongkong", "id": "i-xxx"}, ...])
 # TRAFFIC_THRESHOLD_GB
 
 [observability]
@@ -16,4 +15,4 @@ enabled = true
 invocation_logs = true
 
 [triggers]
-crons = ["* * * * *"] # 每1分钟运行一次，可根据需要调整
+crons = ["*/10 * * * *"] # 每10分钟运行一次，可根据需要调整

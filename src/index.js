@@ -1,11 +1,10 @@
 /**
- * Aliyun CDT Tracker & ECS Control Worker
+ * Aliyun CDT Tracker & ECS Control Worker (Multi-Region Support)
  * 
  * Required Environment Variables:
  * - ACCESS_KEY_ID: Aliyun Access Key ID
  * - ACCESS_KEY_SECRET: Aliyun Access Key Secret
- * - REGION_ID: ECS Region ID (e.g., cn-hongkong)
- * - ECS_INSTANCE_ID: ECS Instance ID
+ * - ECS_INSTANCES_JSON: JSON string containing array of { "region": "...", "id": "..." }
  * - TRAFFIC_THRESHOLD_GB: Traffic threshold in GB (default: 180)
  */
 
@@ -15,7 +14,6 @@ export default {
     await handleSchedule(env);
   },
 
-  // Also allow manual trigger via HTTP for testing
   async fetch(request, env, ctx) {
     await handleSchedule(env);
     return new Response("Executed successfully", { status: 200 });
@@ -26,41 +24,58 @@ async function handleSchedule(env) {
   const {
     ACCESS_KEY_ID,
     ACCESS_KEY_SECRET,
-    REGION_ID,
-    ECS_INSTANCE_ID,
+    ECS_INSTANCES_JSON,
     TRAFFIC_THRESHOLD_GB
   } = env;
 
-  if (!ACCESS_KEY_ID || !ACCESS_KEY_SECRET || !REGION_ID || !ECS_INSTANCE_ID) {
+  if (!ACCESS_KEY_ID || !ACCESS_KEY_SECRET || !ECS_INSTANCES_JSON) {
     console.error("Missing required environment variables.");
     return;
   }
 
   const threshold = parseFloat(TRAFFIC_THRESHOLD_GB || "180");
   
+  let instances = [];
   try {
-    // 1. Check Total Traffic
+    instances = JSON.parse(ECS_INSTANCES_JSON);
+  } catch (e) {
+    console.error("Invalid ECS_INSTANCES_JSON format. Must be a valid JSON array.");
+    return;
+  }
+  
+  try {
+    // 1. 获取 CDT 总流量 (全局)
     const totalTrafficGB = await getTotalTrafficGB(env);
     console.log(`Current Total Traffic: ${totalTrafficGB.toFixed(2)} GB`);
 
-    // 2. Check ECS Status
-    const instanceStatus = await getEcsStatus(env, ECS_INSTANCE_ID);
-    console.log(`ECS Instance ${ECS_INSTANCE_ID} Status: ${instanceStatus}`);
+    // 2. 遍历并处理每个 ECS 实例
+    for (const inst of instances) {
+      const regionId = inst.region;
+      const instanceId = inst.id;
 
-    // 3. Control Logic
-    if (totalTrafficGB < threshold) {
-      if (instanceStatus !== "Running" && instanceStatus !== "Starting") {
-        console.log(`Traffic (${totalTrafficGB.toFixed(2)} GB) < Threshold (${threshold} GB). Starting ECS...`);
-        await startEcsInstance(env, ECS_INSTANCE_ID);
-      } else {
-        console.log("ECS is already running or starting.");
+      if (!regionId || !instanceId) {
+        console.error("Invalid instance config:", inst);
+        continue;
       }
-    } else {
-      if (instanceStatus !== "Stopped" && instanceStatus !== "Stopping") {
-        console.log(`Traffic (${totalTrafficGB.toFixed(2)} GB) >= Threshold (${threshold} GB). Stopping ECS...`);
-        await stopEcsInstance(env, ECS_INSTANCE_ID);
+
+      const instanceStatus = await getEcsStatus(env, instanceId, regionId);
+      console.log(`ECS Instance ${instanceId} (${regionId}) Status: ${instanceStatus}`);
+
+      // 3. 流量控制逻辑
+      if (totalTrafficGB < threshold) {
+        if (instanceStatus !== "Running" && instanceStatus !== "Starting") {
+          console.log(`Traffic (${totalTrafficGB.toFixed(2)} GB) < Threshold (${threshold} GB). Starting ECS ${instanceId}...`);
+          await startEcsInstance(env, instanceId, regionId);
+        } else {
+          console.log(`ECS ${instanceId} is already running or starting.`);
+        }
       } else {
-        console.log("ECS is already stopped or stopping.");
+        if (instanceStatus !== "Stopped" && instanceStatus !== "Stopping") {
+          console.log(`Traffic (${totalTrafficGB.toFixed(2)} GB) >= Threshold (${threshold} GB). Stopping ECS ${instanceId}...`);
+          await stopEcsInstance(env, instanceId, regionId);
+        } else {
+          console.log(`ECS ${instanceId} is already stopped or stopping.`);
+        }
       }
     }
 
@@ -75,12 +90,10 @@ async function getTotalTrafficGB(env) {
   const params = {
     Action: 'ListCdtInternetTraffic',
     Version: '2021-08-13',
-    // BusinessRegionId: env.REGION_ID // Optional? Code used generic endpoint
   };
 
   const result = await requestAliyun(env, 'cdt.aliyuncs.com', params);
   
-  // Parse result based on Python logic: sum(d.get('Traffic', 0) for d in response_json.get('TrafficDetails', []))
   const trafficDetails = result.TrafficDetails || [];
   let totalBytes = 0;
   for (const detail of trafficDetails) {
@@ -90,57 +103,47 @@ async function getTotalTrafficGB(env) {
   return totalBytes / (1024 ** 3);
 }
 
-async function getEcsStatus(env, instanceId) {
+async function getEcsStatus(env, instanceId, regionId) {
   const params = {
     Action: 'DescribeInstances',
     Version: '2014-05-26',
-    RegionId: env.REGION_ID,
+    RegionId: regionId,
     InstanceIds: JSON.stringify([instanceId])
   };
 
-  const result = await requestAliyun(env, `ecs.${env.REGION_ID}.aliyuncs.com`, params);
+  const result = await requestAliyun(env, `ecs.${regionId}.aliyuncs.com`, params);
   const instances = result.Instances?.Instance || [];
   if (instances.length === 0) {
-    throw new Error("Instance not found");
+    throw new Error(`Instance ${instanceId} not found in ${regionId}`);
   }
   return instances[0].Status;
 }
 
-async function startEcsInstance(env, instanceId) {
+async function startEcsInstance(env, instanceId, regionId) {
   const params = {
     Action: 'StartInstances',
     Version: '2014-05-26',
-    RegionId: env.REGION_ID,
+    RegionId: regionId,
     InstanceIds: JSON.stringify([instanceId])
   };
-  return await requestAliyun(env, `ecs.${env.REGION_ID}.aliyuncs.com`, params);
+  return await requestAliyun(env, `ecs.${regionId}.aliyuncs.com`, params);
 }
 
-async function stopEcsInstance(env, instanceId) {
+async function stopEcsInstance(env, instanceId, regionId) {
   const params = {
     Action: 'StopInstances',
     Version: '2014-05-26',
-    RegionId: env.REGION_ID,
+    RegionId: regionId,
     InstanceIds: JSON.stringify([instanceId]),
     ForceStop: 'false'
   };
-  return await requestAliyun(env, `ecs.${env.REGION_ID}.aliyuncs.com`, params);
+  return await requestAliyun(env, `ecs.${regionId}.aliyuncs.com`, params);
 }
 
 // ================== Core Request Logic ==================
 
 async function requestAliyun(env, domain, params) {
-  const method = 'POST'; // Aliyun SDK usually uses POST/GET. The python script used POST for CDT, default for others.
-  // Actually, standard RPC can use GET or POST. POST is safer for large params.
-  // We will use POST and put params in body or query? 
-  // For signature calculation, Aliyun requires params in Query String or Body (if form-urlencoded).
-  // Let's use GET for simplicity of signature matching if possible, or POST with query params.
-  // The Python CommonRequest set method to POST.
-  // StartInstances usually works with POST.
-  
-  // Let's stick to using Query Parameters for everything including signature, and send a POST request (or GET).
-  // If we send POST, we can put parameters in the URL (Query) and empty body, or Form Body.
-  // To be consistent with signature calculation, if we put everything in Query String, it's easier.
+  const method = 'POST'; 
   
   const finalParams = {
     ...params,
@@ -149,14 +152,12 @@ async function requestAliyun(env, domain, params) {
     SignatureMethod: 'HMAC-SHA1',
     SignatureVersion: '1.0',
     SignatureNonce: crypto.randomUUID(),
-    Timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') // YYYY-MM-DDThh:mm:ssZ
+    Timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') 
   };
 
-  // Sort and Sign
   const signature = await sign(finalParams, env.ACCESS_KEY_SECRET, method);
   finalParams.Signature = signature;
 
-  // Build Query String
   const queryString = Object.keys(finalParams)
     .sort()
     .map(key => `${percentEncode(key)}=${percentEncode(String(finalParams[key]))}`)
