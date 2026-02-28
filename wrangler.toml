@@ -6,8 +6,7 @@ compatibility_date = "2024-04-05"
 # 请在 Cloudflare Dashboard 中设置这些变量，不要直接写在这里，以防泄露
 # ACCESS_KEY_ID
 # ACCESS_KEY_SECRET
-# ECS_INSTANCES_JSON  (JSON array: [{"region": "cn-hongkong", "id": "i-xxx"}, ...])
-# TRAFFIC_THRESHOLD_GB
+# ECS_INSTANCES_JSON  (JSON array: [{"region": "cn-hongkong", "id": "i-xxx", "threshold": 200}, ...])
 
 [observability]
 [observability.logs]

@@ -2,7 +2,7 @@
 
 在 Cloudflare Workers 上使用 Cron 触发器运行阿里云 CDT 流量监控和 ECS 控制脚本。
 
-**支持多实例、多地域监控** - 可以同时管理位于不同区域的多个 ECS 实例。
+**支持多实例、多地域独立流量监控** - 可以同时管理位于不同区域的多个 ECS 实例，每个实例可单独设置流量限额。
 
 ## 前置条件
 
@@ -29,11 +29,8 @@
    # 输入阿里云 Access Key Secret
 
    npx wrangler secret put ECS_INSTANCES_JSON
-   # 输入实例 JSON 数组，例如：
-   # [{"region": "cn-hongkong", "id": "i-1234567890abcdefg"}, {"region": "ap-southeast-1", "id": "i-abcdefg1234567890"}]
-
-   npx wrangler secret put TRAFFIC_THRESHOLD_GB
-   # 输入流量阈值（例如：180）。如未设置，默认为 180。
+   # 输入实例 JSON 数组，每台实例单独设置流量限额（GB），例如：
+   # [{"region": "cn-hongkong", "id": "i-xxx", "threshold": 200}, {"region": "cn-shenzhen", "id": "i-yyy", "threshold": 20}]
    ```
 
 3. **部署**
@@ -50,13 +47,27 @@
   crons = ["*/10 * * * *"]
   ```
 
-- **多实例配置**：`ECS_INSTANCES_JSON` 变量接受 JSON 数组格式：
+- **多实例配置**：`ECS_INSTANCES_JSON` 变量接受 JSON 数组格式，每台实例可单独设置流量限额：
   ```json
   [
-    { "region": "cn-hongkong", "id": "i-xxxxxxxxxxxxxxxxx" },
-    { "region": "ap-southeast-1", "id": "i-yyyyyyyyyyyyyyyyy" }
+    { "region": "cn-hongkong", "id": "i-xxx", "threshold": 200 },
+    { "region": "cn-shenzhen", "id": "i-yyy", "threshold": 20 }
   ]
   ```
+  
+  | 字段 | 说明 |
+  |------|------|
+  | region | 地域 ID（如 cn-hongkong、cn-shenzhen） |
+  | id | ECS 实例 ID |
+  | threshold | 流量限额（GB），该地域流量超限后实例将被停止 |
+
+## 工作原理
+
+1. 获取阿里云 CDT 各地域的流量数据（按 `BusinessRegionId` 分组）
+2. 遍历每台实例，根据其 `region` 匹配对应地域的流量
+3. 各实例独立判断：地域流量 < 阈值 → 启动；地域流量 ≥ 阈值 → 停止
+
+**注意**：同一地域的多台实例共享该地域的流量额度，若超限则该地域所有实例都会被停止。
 
 ## 本地开发
 
