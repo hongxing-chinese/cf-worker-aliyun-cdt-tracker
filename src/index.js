@@ -119,6 +119,8 @@ async function getTrafficByRegion(env) {
   return trafficByRegion;
 }
 
+// ================== ECS API ==================
+
 async function getEcsStatus(env, instanceId, regionId) {
   const params = {
     Action: 'DescribeInstances',
@@ -129,38 +131,54 @@ async function getEcsStatus(env, instanceId, regionId) {
 
   const result = await requestAliyun(env, `ecs.${regionId}.aliyuncs.com`, params);
   const instances = result.Instances?.Instance || [];
+
   if (instances.length === 0) {
     throw new Error(`Instance ${instanceId} not found in ${regionId}`);
   }
+
   return instances[0].Status;
 }
 
 async function startEcsInstance(env, instanceId, regionId) {
   const params = {
-    Action: 'StartInstances',
+    Action: 'StartInstance',
     Version: '2014-05-26',
     RegionId: regionId,
-    InstanceIds: JSON.stringify([instanceId])
+    InstanceId: instanceId
   };
+
   return await requestAliyun(env, `ecs.${regionId}.aliyuncs.com`, params);
 }
 
 async function stopEcsInstance(env, instanceId, regionId) {
   const params = {
-    Action: 'StopInstances',
+    Action: 'StopInstance',
     Version: '2014-05-26',
     RegionId: regionId,
-    InstanceIds: JSON.stringify([instanceId]),
+    InstanceId: instanceId,
     ForceStop: 'false'
   };
+
+  return await requestAliyun(env, `ecs.${regionId}.aliyuncs.com`, params);
+}
+
+async function rebootEcsInstance(env, instanceId, regionId) {
+  const params = {
+    Action: 'RebootInstance',
+    Version: '2014-05-26',
+    RegionId: regionId,
+    InstanceId: instanceId,
+    ForceStop: 'false'
+  };
+
   return await requestAliyun(env, `ecs.${regionId}.aliyuncs.com`, params);
 }
 
 // ================== Core Request Logic ==================
 
 async function requestAliyun(env, domain, params) {
-  const method = 'POST'; 
-  
+  const method = 'POST';
+
   const finalParams = {
     ...params,
     AccessKeyId: env.ACCESS_KEY_ID,
@@ -168,7 +186,7 @@ async function requestAliyun(env, domain, params) {
     SignatureMethod: 'HMAC-SHA1',
     SignatureVersion: '1.0',
     SignatureNonce: crypto.randomUUID(),
-    Timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') 
+    Timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   };
 
   const signature = await sign(finalParams, env.ACCESS_KEY_SECRET, method);
@@ -199,13 +217,13 @@ async function sign(params, accessKeySecret, method) {
     .map(key => `${percentEncode(key)}=${percentEncode(String(params[key]))}`)
     .join('&');
 
-  const stringToSign = 
-    method.toUpperCase() + '&' + 
-    percentEncode('/') + '&' + 
+  const stringToSign =
+    method.toUpperCase() + '&' +
+    percentEncode('/') + '&' +
     percentEncode(canonicalizedQueryString);
 
   const key = accessKeySecret + '&';
-  
+
   return await hmacSha1(key, stringToSign);
 }
 
