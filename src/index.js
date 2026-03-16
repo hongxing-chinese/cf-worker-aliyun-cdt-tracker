@@ -56,24 +56,30 @@ async function handleSchedule(env) {
         continue;
       }
 
-      // 获取该地域的流量（GB）
-      const regionTrafficGB = trafficByRegion[regionId] || 0;
-      console.log(`Region ${regionId} Traffic: ${regionTrafficGB.toFixed(2)} GB, Threshold: ${threshold} GB`);
+      // 获取该实例的流量信息（优先按实例ID匹配，回退到地域流量）
+      const trafficInfo = await getInstanceUsedTrafficGB(env, instanceId, regionId);
+      if (trafficInfo.isMatched) {
+        console.log(`CDT Used Traffic for ECS ${instanceId}: ${trafficInfo.trafficGB.toFixed(2)} GB (matched by instance)`);
+      } else {
+        const regionTrafficGB = trafficByRegion[regionId] || 0;
+        console.log(`CDT Used Traffic for ECS ${instanceId}: ${regionTrafficGB.toFixed(2)} GB (fallback to region ${regionId})`);
+        trafficInfo.trafficGB = regionTrafficGB;
+      }
 
       const instanceStatus = await getEcsStatus(env, instanceId, regionId);
       console.log(`ECS Instance ${instanceId} (${regionId}) Status: ${instanceStatus}`);
 
       // 3. 流量控制逻辑（每个实例独立判断）
-      if (regionTrafficGB < threshold) {
+      if (trafficInfo.trafficGB < threshold) {
         if (instanceStatus !== "Running" && instanceStatus !== "Starting") {
-          console.log(`Region traffic (${regionTrafficGB.toFixed(2)} GB) < Threshold (${threshold} GB). Starting ECS ${instanceId}...`);
+          console.log(`Traffic (${trafficInfo.trafficGB.toFixed(2)} GB) < Threshold (${threshold} GB). Starting ECS ${instanceId}...`);
           await startEcsInstance(env, instanceId, regionId);
         } else {
           console.log(`ECS ${instanceId} is already running or starting.`);
         }
       } else {
         if (instanceStatus !== "Stopped" && instanceStatus !== "Stopping") {
-          console.log(`Region traffic (${regionTrafficGB.toFixed(2)} GB) >= Threshold (${threshold} GB). Stopping ECS ${instanceId}...`);
+          console.log(`Traffic (${trafficInfo.trafficGB.toFixed(2)} GB) >= Threshold (${threshold} GB). Stopping ECS ${instanceId}...`);
           await stopEcsInstance(env, instanceId, regionId);
         } else {
           console.log(`ECS ${instanceId} is already stopped or stopping.`);
@@ -100,23 +106,84 @@ async function getTrafficByRegion(env) {
 
   const result = await requestAliyun(env, 'cdt.aliyuncs.com', params);
   
-  const trafficDetails = result.TrafficDetails || [];
+  const trafficDetailsRaw = result?.TrafficDetails;
+  const trafficDetails = Array.isArray(trafficDetailsRaw)
+    ? trafficDetailsRaw
+    : Array.isArray(trafficDetailsRaw?.TrafficDetail)
+      ? trafficDetailsRaw.TrafficDetail
+      : [];
+
   const trafficByRegion = {};
 
   for (const detail of trafficDetails) {
     // BusinessRegionId 对应 ECS 的 regionId
     const region = detail.BusinessRegionId;
-    const traffic = detail.Traffic || 0;  // 字节
+    const trafficValue = Number(detail?.Traffic ?? detail?.TrafficBytes ?? 0);
+    const trafficBytes = Number.isFinite(trafficValue) ? trafficValue : 0;
 
     if (region) {
       if (!trafficByRegion[region]) {
         trafficByRegion[region] = 0;
       }
-      trafficByRegion[region] += traffic / (1024 ** 3);  // 转换为 GB
+      trafficByRegion[region] += trafficBytes / (1024 ** 3);  // 转换为 GB
     }
   }
 
   return trafficByRegion;
+}
+
+/**
+ * 获取单个实例的流量信息（优先按实例ID匹配）
+ * 返回 { trafficGB: number, isMatched: boolean }
+ */
+async function getInstanceUsedTrafficGB(env, instanceId, regionId) {
+  const params = {
+    Action: 'ListCdtInternetTraffic',
+    Version: '2021-08-13'
+  };
+
+  const result = await requestAliyun(env, 'cdt.aliyuncs.com', params);
+  const trafficDetailsRaw = result?.TrafficDetails;
+  const trafficDetails = Array.isArray(trafficDetailsRaw)
+    ? trafficDetailsRaw
+    : Array.isArray(trafficDetailsRaw?.TrafficDetail)
+      ? trafficDetailsRaw.TrafficDetail
+      : [];
+
+  let totalBytes = 0;
+  let matchedBytes = 0;
+  let matchedCount = 0;
+
+  for (const detail of trafficDetails) {
+    const trafficValue = Number(detail?.Traffic ?? detail?.TrafficBytes ?? 0);
+    const trafficBytes = Number.isFinite(trafficValue) ? trafficValue : 0;
+    totalBytes += trafficBytes;
+
+    const resourceId = String(
+      detail?.ResourceId ??
+      detail?.InstanceId ??
+      detail?.ProductInstanceId ??
+      detail?.Id ??
+      ''
+    );
+
+    if (resourceId === instanceId) {
+      matchedBytes += trafficBytes;
+      matchedCount += 1;
+    }
+  }
+
+  if (matchedCount > 0) {
+    return {
+      trafficGB: matchedBytes / (1024 ** 3),
+      isMatched: true
+    };
+  }
+
+  return {
+    trafficGB: totalBytes / (1024 ** 3),
+    isMatched: false
+  };
 }
 
 // ================== ECS API ==================
